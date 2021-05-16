@@ -48,7 +48,7 @@ struct OCR {
 };
 
 struct ThreadedOCR {
-	ThreadedOCR(VideoFile& video);
+	ThreadedOCR(VideoFile& video, const Settings &settings);
 	bool start(int count = -1);
 
 	void stopThreads();
@@ -64,6 +64,7 @@ struct ThreadedOCR {
 
 	void waitFinish();
 
+	const Settings settings;
 	OCR result;
 	std::condition_variable resultCvar;
 	std::mutex resultMutex;

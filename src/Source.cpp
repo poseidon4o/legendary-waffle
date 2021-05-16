@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
 		return 2;
 	}
 
-	ThreadedOCR threadedOCR(video);
+	ThreadedOCR threadedOCR(video, settings);
 	if (!threadedOCR.start(settings.threadCount)) {
 		puts("Failed to start threads");
 		return 4;

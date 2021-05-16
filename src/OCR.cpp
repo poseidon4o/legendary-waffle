@@ -92,7 +92,11 @@ bool OCR::matchFound() const {
 	return foundMatch != nullptr;
 }
 
-ThreadedOCR::ThreadedOCR(VideoFile& video): video(video) {}
+ThreadedOCR::ThreadedOCR(VideoFile& video, const Settings &settings)
+	: settings(settings)
+	, video(video)
+	, frameSkip(settings.frameSkip) {
+}
 
 bool ThreadedOCR::start(int count) {
 	stopFlag = false;
@@ -150,7 +154,7 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 			frame = video.getFrame(frameIdx);
 		}
 
-		OCR ocr(frameIdx, video.frameCount);;
+		OCR ocr(frameIdx, video.frameCount);
 		ocr.processFrame(tessCtx, frame);
 
 		if (ocr.matchFound()) {
