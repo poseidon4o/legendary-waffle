@@ -31,6 +31,10 @@ set(SOURCES
 	src/Source.cpp
 	src/ResourceMatcher.h
 	src/ResourceMatcher.cpp
+	src/TSQueue.hpp
+	src/Utils.hpp
+	src/OCR.h
+	src/OCR.cpp
 )
 
 add_executable(${PROJECT_NAME} "${SOURCES}")
