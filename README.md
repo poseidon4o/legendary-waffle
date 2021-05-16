@@ -1,4 +1,5 @@
 # legendary-waffle
+Match text in video
 
 # Setup
 1. Get the vcpkg submodule `git submodule update --init vcpkg`
@@ -8,4 +9,4 @@
     - `.\vcpkg\vcpkg.exe install opencv:x64-windows-static tesseract:x64-windows-static`
 
 # Usage
-`LegendaryWaffle.exe -show 1 -video "C:/path/to/video.mp4"`
+`LegendaryWaffle.exe -video "C:/path/to/video.mp4" -matchersFile match-terms.txt`

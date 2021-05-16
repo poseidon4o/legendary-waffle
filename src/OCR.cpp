@@ -1,7 +1,7 @@
 #include "OCR.h"
 
 bool VideoFile::init(const Settings &settings) {
-	video.open(settings.filePath);
+	video.open(settings.videoPath);
 	if (!video.isOpened()) {
 		return false;
 	}
@@ -38,14 +38,14 @@ void TesseractCTX::orcImage(const cv::Mat& frame) {
 	tesseract.Recognize(nullptr);
 }
 
-OCR::OCR(int frameIndex, int totalFrames)
-	: frameIndex(frameIndex)
-	, totalFrames(totalFrames)
+OCR::OCR(const MatcherFactory &factory, int totalFrames)
+	: totalFrames(totalFrames)
 {
-	matchers.push_back(std::make_unique<SpecificMatcher>());
+	factory.create(matchers);
 }
 
-void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame) {
+void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameIndex) {
+	this->frameIndex = frameIndex;
 	const int percent = int(float(frameIndex) / totalFrames * 100);
 	printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.index, frameIndex, totalFrames, percent);
 	fflush(stdout);
@@ -69,19 +69,19 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame) {
 		if (iter->BoundingBox(tesseract::RIL_PARA, &left, &top, &right, &bottom)) {
 			const cv::Rect bbox{{left, top}, cv::Size{right - left, bottom - top}};
 			// cv::rectangle(matchFrame, bbox, {255, 0, 0});
-			for (std::unique_ptr<ResourceMatcher>& matcher : matchers) {
-				matcher->addBlock(text, bbox);
+			for (ResourceMatcher &matcher : matchers) {
+				matcher.addBlock(text, bbox);
 			}
 		}
 	} while (iter->Next(tesseract::RIL_PARA));
 
-	for (std::unique_ptr<ResourceMatcher>& matcher : matchers) {
-		if (matcher->getMatchConfidence() > 0.3) {
+	for (ResourceMatcher &matcher : matchers) {
+		if (matcher.getMatchConfidence() > ResourceMatcher::minThreshold) {
 			frame = matchFrame;
-			for (const auto& match : matcher->matches) {
+			for (const auto& match : matcher.matches) {
 				cv::rectangle(matchFrame, match.bbox, red);
 			}
-			foundMatch = std::move(matcher);
+			foundMatch = std::make_unique<ResourceMatcher>(matcher);
 			matchers.clear();
 			break;
 		}
@@ -92,11 +92,22 @@ bool OCR::matchFound() const {
 	return foundMatch != nullptr;
 }
 
-ThreadedOCR::ThreadedOCR(VideoFile& video, const Settings &settings)
-	: settings(settings)
-	, video(video)
-	, frameSkip(settings.frameSkip) {
+void OCR::clear() {
+	foundMatch.reset(nullptr);
+	for (ResourceMatcher& matcher : matchers) {
+		matcher.clear();
+	}
+	frame.release();
+	frameIndex = -1;
 }
+
+ThreadedOCR::ThreadedOCR(const Settings &settings, const MatcherFactory &factory, VideoFile &video)
+	: settings(settings)
+	, factory(factory)
+	, frameSkip(settings.frameSkip)
+	, video(video)
+	, result(factory)
+{}
 
 bool ThreadedOCR::start(int count) {
 	stopFlag = false;
@@ -143,6 +154,8 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 		return;
 	}
 
+	OCR ocr(factory, video.frameCount);
+
 	int frameIdx = nextFrame.fetch_add(frameSkip);
 	while (frameIdx < maxFrame) {
 		if (stopFlag.load()) {
@@ -153,9 +166,8 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 			lock_guard lock(videoMutex);
 			frame = video.getFrame(frameIdx);
 		}
-
-		OCR ocr(frameIdx, video.frameCount);
-		ocr.processFrame(tessCtx, frame);
+		ocr.clear();
+		ocr.processFrame(tessCtx, frame, frameIdx);
 
 		if (ocr.matchFound()) {
 			lock_guard resLock(resultMutex);
@@ -170,6 +182,7 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 
 		frameIdx = nextFrame.fetch_add(frameSkip);
 	}
+	resultCvar.notify_all();
 }
 
 void ThreadedOCR::waitFinish() {

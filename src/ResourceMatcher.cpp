@@ -1,10 +1,10 @@
 #include "ResourceMatcher.h"
 
-const std::vector<std::string> SpecificMatcher::keywords = {
-	"test1", "test2", "test3",
-};
+#include <fstream>
 
-void SpecificMatcher::addBlock(const CharPtr& data, const cv::Rect &where) {
+ResourceMatcher::ResourceMatcher(const std::vector<std::string>& keywords): keywords(keywords) {}
+
+void ResourceMatcher::addBlock(const CharPtr& data, const cv::Rect &where) {
 	for (const std::string &keyWord : keywords) {
 		if (strstr(data.get(), keyWord.c_str())) {
 			matches.push_back({keyWord, where});
@@ -13,6 +13,47 @@ void SpecificMatcher::addBlock(const CharPtr& data, const cv::Rect &where) {
 	}
 }
 
-float SpecificMatcher::getMatchConfidence() {
+float ResourceMatcher::getMatchConfidence() const {
 	return std::min(1.f, found / float(keywords.size()));
+}
+
+void ResourceMatcher::clear() {
+	found = 0;
+	matches.clear();
+}
+
+bool MatcherFactory::init() {
+	std::fstream file(matchersFile, std::ios::in);
+	if (!file) {
+		return false;
+	}
+	std::vector<std::string> keyWords;
+	std::string line;
+	while(std::getline(file, line)) {
+		std::stringstream stream(line);
+		std::string word;
+		while (stream >> word) {
+			keyWords.push_back(word);
+		}
+		wordLists.push_back(keyWords);
+		keyWords.clear();
+	}
+	return !wordLists.empty();
+}
+
+void MatcherFactory::showInfo() const {
+	for (int c = 0; c < wordLists.size(); c++) {
+		printf("Matcher[%d]:", c);
+		for (const std::string& w : wordLists[c]) {
+			printf("%s ", w.c_str());
+		}
+		puts("");
+	}
+}
+
+void MatcherFactory::create(std::vector<ResourceMatcher>& matchers) const {
+	matchers.clear();
+	for (const std::vector<std::string>& keyWords : wordLists) {
+		matchers.push_back(ResourceMatcher(keyWords));
+	}
 }

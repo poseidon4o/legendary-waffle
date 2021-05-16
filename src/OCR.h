@@ -33,22 +33,24 @@ struct TesseractCTX {
 };
 
 struct OCR {
-	OCR(int frameIndex = -1, int totalFrames = -1);
+	OCR(const MatcherFactory &factory, int totalFrames = -1);
 
-	void processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame);
+	void processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameIndex);
 
 	bool matchFound() const;
+
+	void clear();
 
 	bool showFrame = true;
 	int frameIndex = -1;
 	int totalFrames = -1;
 	std::unique_ptr<ResourceMatcher> foundMatch;
 	cv::Mat frame;
-	std::vector<std::unique_ptr<ResourceMatcher>> matchers;
+	std::vector<ResourceMatcher> matchers;
 };
 
 struct ThreadedOCR {
-	ThreadedOCR(VideoFile& video, const Settings &settings);
+	ThreadedOCR(const Settings &settings, const MatcherFactory &factory, VideoFile &video);
 	bool start(int count = -1);
 
 	void stopThreads();
@@ -65,12 +67,14 @@ struct ThreadedOCR {
 	void waitFinish();
 
 	const Settings settings;
+	const MatcherFactory &factory;
+	VideoFile &video;
+	std::mutex videoMutex;
+
 	OCR result;
 	std::condition_variable resultCvar;
 	std::mutex resultMutex;
 
-	VideoFile &video;
-	std::mutex videoMutex;
 	std::atomic<bool> stopFlag = false;
 	std::atomic<int> nextFrame;
 	int maxFrame;

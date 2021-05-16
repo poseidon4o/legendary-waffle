@@ -9,26 +9,32 @@
 typedef std::unique_ptr<char> CharPtr;
 
 struct ResourceMatcher {
-	virtual void addBlock(const CharPtr &data, const cv::Rect &where) = 0;
+	ResourceMatcher(const std::vector<std::string>& keywords);
 
-	virtual float getMatchConfidence() {
-		return 0.f; 
-	}
+	void addBlock(const CharPtr &data, const cv::Rect &where);
+
+	float getMatchConfidence() const;
+
+	void clear();
 
 	struct Match {
 		std::string value;
 		cv::Rect bbox;
 	};
 
-	std::vector<Match> matches;
-};
-
-struct SpecificMatcher : ResourceMatcher {
-	void addBlock(const CharPtr& data, const cv::Rect &where) override;
-	float getMatchConfidence() override;
-
 	int found = 0;
-
-	static const std::vector<std::string> keywords;
+	constexpr static float minThreshold = 0.3;
+	std::vector<Match> matches;
+	const std::vector<std::string> keywords;
 };
 
+struct MatcherFactory {
+	std::string matchersFile;
+	std::vector<std::vector<std::string>> wordLists;
+
+	bool init();
+
+	void showInfo() const;
+
+	void create(std::vector<ResourceMatcher>& matchers) const;
+};
