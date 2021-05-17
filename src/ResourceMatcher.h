@@ -23,7 +23,7 @@ struct ResourceMatcher {
 	};
 
 	int found = 0;
-	constexpr static float minThreshold = 0.3;
+	constexpr static float minThreshold = 0.3f;
 	std::vector<Match> matches;
 	const std::vector<std::string> keywords;
 };

@@ -40,6 +40,12 @@ set(SOURCES
 
 add_executable(${PROJECT_NAME} "${SOURCES}")
 
+if(MSVC)
+	target_compile_options(${PROJECT_NAME} PRIVATE /W4 /WX)
+else()
+	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic -Werror)
+endif()
+
 target_include_directories(${PROJECT_NAME} PRIVATE ${LIBXML2_INCLUDE_DIR})
 target_compile_definitions(${PROJECT_NAME} PRIVATE TESSDATA_DIR="${TESSDATA_DIR}")
 

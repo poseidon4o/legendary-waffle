@@ -6,7 +6,7 @@ bool VideoFile::init(const Settings &settings) {
 		return false;
 	}
 
-	frameCount = video.get(cv::CAP_PROP_FRAME_COUNT);
+	frameCount = int(video.get(cv::CAP_PROP_FRAME_COUNT));
 	return true;
 }
 
@@ -34,7 +34,7 @@ bool TesseractCTX::init(int idx) {
 }
 
 void TesseractCTX::orcImage(const cv::Mat& frame) {
-	tesseract.SetImage(frame.data, frame.cols, frame.rows, 3, frame.step);
+	tesseract.SetImage(frame.data, frame.cols, frame.rows, 3, int(frame.step));
 	tesseract.Recognize(nullptr);
 }
 
@@ -44,8 +44,8 @@ OCR::OCR(const MatcherFactory &factory, int totalFrames)
 	factory.create(matchers);
 }
 
-void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameIndex) {
-	this->frameIndex = frameIndex;
+void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNum) {
+	frameIndex = frameNum;
 	const int percent = int(float(frameIndex) / totalFrames * 100);
 	printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.index, frameIndex, totalFrames, percent);
 	fflush(stdout);
@@ -65,7 +65,7 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameIn
 		}
 		CharPtr text(iter->GetUTF8Text(tesseract::RIL_PARA));
 
-		int left, top, right, bottom, padding;
+		int left, top, right, bottom;
 		if (iter->BoundingBox(tesseract::RIL_PARA, &left, &top, &right, &bottom)) {
 			const cv::Rect bbox{{left, top}, cv::Size{right - left, bottom - top}};
 			// cv::rectangle(matchFrame, bbox, {255, 0, 0});
