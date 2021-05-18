@@ -17,6 +17,11 @@ cv::Mat VideoFile::getFrame(int index) {
 	return frame;
 }
 
+int VideoFile::frameToMs(int index) {
+	video.set(cv::CAP_PROP_POS_FRAMES, index);
+	return int(video.get(cv::CAP_PROP_POS_MSEC));
+}
+
 VideoFile::~VideoFile() {
 	video.release();
 }
@@ -38,8 +43,9 @@ void TesseractCTX::orcImage(const cv::Mat& frame) {
 	tesseract.Recognize(nullptr);
 }
 
-OCR::OCR(const MatcherFactory &factory, int totalFrames)
-	: totalFrames(totalFrames)
+OCR::OCR(Settings settings, const MatcherFactory &factory, int totalFrames)
+	: settings(std::move(settings))
+	, totalFrames(totalFrames)
 {
 	factory.create(matchers);
 }
@@ -69,9 +75,16 @@ static void trimString(CharPtr &ptr) {
 void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNum) {
 	frameIndex = frameNum;
 	const int percent = int(float(frameIndex) / totalFrames * 100);
-	printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.index, frameIndex, totalFrames, percent);
+	if (!settings.silent) {
+		printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.index, frameIndex, totalFrames, percent);
+	}
 	fflush(stdout);
-	ctx.orcImage(matchFrame);
+	if (settings.doCrop) {
+		const cv::Mat cropped(matchFrame, cv::Range(0, matchFrame.rows / 2), cv::Range(0, matchFrame.cols / 2));
+		ctx.orcImage(cropped);
+	} else {
+		ctx.orcImage(matchFrame);
+	}
 
 	tesseract::ResultIterator* iter = ctx.tesseract.GetIterator();
 	if (!iter) {
@@ -129,7 +142,7 @@ ThreadedOCR::ThreadedOCR(const Settings &settings, const MatcherFactory &factory
 	, factory(factory)
 	, frameSkip(settings.frameSkip)
 	, video(video)
-	, result(factory)
+	, result(settings, factory)
 {}
 
 bool ThreadedOCR::start(int count) {
@@ -183,7 +196,7 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 		return;
 	}
 
-	OCR ocr(factory, video.frameCount);
+	OCR ocr(settings, factory, video.frameCount);
 
 	int frameIdx = nextFrame.fetch_add(frameSkip);
 	while (frameIdx < maxFrame) {

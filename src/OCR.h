@@ -15,6 +15,8 @@ struct VideoFile {
 
 	cv::Mat getFrame(int index);
 
+	int frameToMs(int index);
+
 	~VideoFile();
 
 	cv::VideoCapture video;
@@ -33,7 +35,7 @@ struct TesseractCTX {
 };
 
 struct OCR {
-	OCR(const MatcherFactory &factory, int totalFrames = -1);
+	OCR(Settings settings, const MatcherFactory &factory, int totalFrames = -1);
 
 	void processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameIndex);
 
@@ -41,6 +43,7 @@ struct OCR {
 
 	void clear();
 
+	Settings settings;
 	bool showFrame = true;
 	int frameIndex = -1;
 	int totalFrames = -1;

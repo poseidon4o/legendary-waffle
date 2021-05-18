@@ -19,19 +19,27 @@ struct Settings {
 	bool showFrame = true;
 	int threadCount = -1;
 	int frameSkip = 24;
+	bool silent = false;
+	bool doCrop = false;
 
 	bool isValid() const {
 		return !videoPath.empty() && !matchersFile.empty();
 	}
 
-	static void printHelp() {
-		Settings defaults;
-		printf("-videoPath     [path]     (%s) Path to video file to analyze\n", defaults.videoPath.c_str());
-		printf("-matchersFile  [path]     (%s) Path to matches file containing search strings\n", defaults.matchersFile.c_str());
-		printf("-show          [1/0]      (%d) Show frame where first detection is found\n", defaults.threadCount);
-		printf("-threadCount   [<number>] (%d) Number of threads\n", defaults.threadCount);
-		printf("-frameSkip     [<number>] (%d) Number of threads\n", defaults.frameSkip);
+	void printValues() const {
+		printf("-videoPath     [path]     (%s) Path to video file to analyze\n", videoPath.c_str());
+		printf("-matchersFile  [path]     (%s) Path to matches file containing search strings\n", matchersFile.c_str());
+		printf("-show          [1/0]      (%d) Show frame where first detection is found\n", threadCount);
+		printf("-silent        [1/0]      (%d) Print only on error and match found\n", silent);
+		printf("-doCrop        [1/0]      (%d) Crop image to upper/left 1/4th\n", doCrop);
+		printf("-threadCount   [<number>] (%d) Number of threads\n", threadCount);
+		printf("-frameSkip     [<number>] (%d) Number of threads\n", frameSkip);
 		printf("-help          []         (  )   Show this help\n");
+	}
+
+	static void printHelp() {
+		const Settings defaults;
+		defaults.printValues();
 	}
 
 	static Settings getSettings(int argc, char *argv[]) {
@@ -41,6 +49,12 @@ struct Settings {
 				return sts;
 			} else if (argv[c] == std::string("-show") && c + 1 < argc) {
 				sts.showFrame = std::string(argv[c + 1]) == "1";
+				c++;
+			} else if (argv[c] == std::string("-silent") && c + 1 < argc) {
+				sts.silent = std::string(argv[c + 1]) == "1";
+				c++;
+			} else if (argv[c] == std::string("-doCrop") && c + 1 < argc) {
+				sts.doCrop = std::string(argv[c + 1]) == "1";
 				c++;
 			} else if (argv[c] == std::string("-video") && c + 1 < argc) {
 				sts.videoPath = std::string(argv[c + 1]);
