@@ -6,6 +6,7 @@
 #include <cassert>
 #endif
 
+#include <algorithm>
 #include <mutex>
 #include <string>
 
@@ -25,12 +26,12 @@ struct Settings {
 
 	static void printHelp() {
 		Settings defaults;
-		printf("-videoPath\t [path]\t (%s) Path to video file to analyze\n", defaults.videoPath.c_str());
-		printf("-matchersFile\t [path]\t (%s) Path to video file to analyze\n", defaults.matchersFile.c_str());
-		printf("-show\t\t [1/0]\t (%d) Show frame where first detection is found\n", defaults.threadCount);
-		printf("-threadCount\t\t [<number>]\t (%d) Number of threads\n", defaults.threadCount);
-		printf("-frameSkip\t\t [<number>]\t (%d) Number of threads\n", defaults.frameSkip);
-		printf("-help\t\t []\t () Show this help\n");
+		printf("-videoPath     [path]     (%s) Path to video file to analyze\n", defaults.videoPath.c_str());
+		printf("-matchersFile  [path]     (%s) Path to matches file containing search strings\n", defaults.matchersFile.c_str());
+		printf("-show          [1/0]      (%d) Show frame where first detection is found\n", defaults.threadCount);
+		printf("-threadCount   [<number>] (%d) Number of threads\n", defaults.threadCount);
+		printf("-frameSkip     [<number>] (%d) Number of threads\n", defaults.frameSkip);
+		printf("-help          []         (  )   Show this help\n");
 	}
 
 	static Settings getSettings(int argc, char *argv[]) {

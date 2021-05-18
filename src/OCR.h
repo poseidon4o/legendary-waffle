@@ -1,12 +1,12 @@
 #pragma once
 
-#include "TSQueue.hpp"
 #include "Utils.hpp"
 #include "ResourceMatcher.h"
 
 #include <tesseract/baseapi.h>
 #include <opencv2/opencv.hpp>
 
+#include <atomic>
 #include <thread>
 
 /// Wrapper over cv::VideoCapture to allow easy access
@@ -76,7 +76,8 @@ struct ThreadedOCR {
 	std::mutex resultMutex;
 
 	std::atomic<bool> stopFlag = false;
-	std::atomic<int> nextFrame;
+	std::atomic<int> runningThreads = 0;
+	std::atomic<int> nextFrame = 0;
 	int maxFrame;
 	const int frameSkip = 24;
 

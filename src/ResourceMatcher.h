@@ -6,7 +6,7 @@
 
 #include <opencv2/opencv.hpp>
 
-typedef std::unique_ptr<char> CharPtr;
+typedef std::unique_ptr<char[]> CharPtr;
 
 struct ResourceMatcher {
 	ResourceMatcher(const std::vector<std::string>& keywords);

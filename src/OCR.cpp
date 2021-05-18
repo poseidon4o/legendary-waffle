@@ -44,6 +44,28 @@ OCR::OCR(const MatcherFactory &factory, int totalFrames)
 	factory.create(matchers);
 }
 
+static void trimString(CharPtr &ptr) {
+	int len = int(strlen(ptr.get()));
+	int step = 0;
+	for (int c = 0; c <= len; c++) {
+		if (ptr[c] == '\t' || ptr[c] == '\n' || ptr[c] == '\r') {
+			++step;
+		} else {
+			ptr[c - step] = ptr[c];
+		}
+	}
+	len -= step;
+
+	step = 0;
+	for (int c = 0; c <= len; c++) {
+		if (ptr[c] == ' ' && c < len && ptr[c + 1] == ' ') {
+			step++;
+		} else {
+			ptr[c - step] = ptr[c];
+		}
+	}
+}
+
 void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNum) {
 	frameIndex = frameNum;
 	const int percent = int(float(frameIndex) / totalFrames * 100);
@@ -64,11 +86,12 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNu
 			continue;
 		}
 		CharPtr text(iter->GetUTF8Text(tesseract::RIL_PARA));
+		trimString(text);
 
 		int left, top, right, bottom;
 		if (iter->BoundingBox(tesseract::RIL_PARA, &left, &top, &right, &bottom)) {
 			const cv::Rect bbox{{left, top}, cv::Size{right - left, bottom - top}};
-			// cv::rectangle(matchFrame, bbox, {255, 0, 0});
+			cv::rectangle(matchFrame, bbox, {255, 0, 0});
 			for (ResourceMatcher &matcher : matchers) {
 				matcher.addBlock(text, bbox);
 			}
@@ -113,6 +136,11 @@ bool ThreadedOCR::start(int count) {
 	stopFlag = false;
 	maxFrame = video.frameCount;
 	const int threadCount = count == -1 ? std::thread::hardware_concurrency() : count;
+	if (threadCount == 1) {
+		ThreadStartContext ctx;
+		threadStart(ctx, 0);
+		return true;
+	}
 	for (int c = 0; c < threadCount; c++) {
 		ThreadStartContext ctx;
 		threads.push_back(std::thread(&ThreadedOCR::threadStart, this, std::ref(ctx), c));
@@ -142,6 +170,7 @@ void ThreadedOCR::stopThreads() {
 
 void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 	TesseractCTX tessCtx;
+	runningThreads.fetch_add(1);
 	const bool isInit = tessCtx.init(idx);
 	{
 		lock_guard lock(threadCtx.mtx);
@@ -182,14 +211,17 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 
 		frameIdx = nextFrame.fetch_add(frameSkip);
 	}
-	resultCvar.notify_all();
+	const int remaining = runningThreads.fetch_sub(1);
+	if (remaining == 1) {
+		resultCvar.notify_all();
+	}
 }
 
 void ThreadedOCR::waitFinish() {
 	{
 		unique_lock lock(resultMutex);
 		resultCvar.wait(lock, [this]() {
-			return result.matchFound() || stopFlag;
+			return result.matchFound() || stopFlag.load() == true || runningThreads.load() == 0;
 		});
 	}
 	stopThreads();

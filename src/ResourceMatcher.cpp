@@ -1,12 +1,22 @@
 #include "ResourceMatcher.h"
 
 #include <fstream>
+#include <algorithm>
 
 ResourceMatcher::ResourceMatcher(const std::vector<std::string>& keywords): keywords(keywords) {}
 
 void ResourceMatcher::addBlock(const CharPtr& data, const cv::Rect &where) {
+	const int len = int(strlen(data.get()));
+
 	for (const std::string &keyWord : keywords) {
-		if (strstr(data.get(), keyWord.c_str())) {
+		auto it = std::search(
+			data.get(), data.get() + len,
+			keyWord.begin(), keyWord.end(),
+			[](char a, char b) {
+				return std::tolower(a) == std::tolower(b);
+			}
+		);
+		if (it != data.get() + len) {
 			matches.push_back({keyWord, where});
 			++found;
 		}

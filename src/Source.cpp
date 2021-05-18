@@ -2,7 +2,6 @@
 #include "ResourceMatcher.h"
 #include "Utils.hpp"
 
-
 int main(int argc, char *argv[]) {
 	const Settings settings = Settings::getSettings(argc, argv);
 	if (!settings.isValid()) {

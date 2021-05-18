@@ -7,7 +7,7 @@ if (WIN32)
 	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
 	set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_DEBUG} /MT")
 
-	set(VCPKG_TARGET_TRIPLET "x64-windows-static")
+	set(VCPKG_TARGET_TRIPLET "x64-windows-static-v141")
 endif()
 
 set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake CACHE STRING "Vcpkg toolchain file")
@@ -40,7 +40,7 @@ set(SOURCES
 add_executable(${PROJECT_NAME} "${SOURCES}")
 
 if(MSVC)
-	target_compile_options(${PROJECT_NAME} PRIVATE /W4 /WX)
+	target_compile_options(${PROJECT_NAME} PRIVATE /W4 /WX /wd4505)
 else()
 	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic -Werror)
 endif()
@@ -55,5 +55,3 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBXML2_LIBRARIES})
 target_link_libraries(${PROJECT_NAME} PRIVATE lz4::lz4)
 target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 target_link_libraries(${PROJECT_NAME} PRIVATE zstd::libzstd_static)
-
-install(TARGETS ${PROJECT_NAME} DESTINATION "${CMAKE_BINARY_DIR}/install-location")
