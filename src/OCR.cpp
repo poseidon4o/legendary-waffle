@@ -1,5 +1,10 @@
 #include "OCR.h"
 
+#include <leptonica/allheaders.h>
+#include <tesseract/renderer.h>
+
+#include <opencv2/imgproc/imgproc.hpp>
+
 bool VideoFile::init(const Settings &settings) {
 	video.open(settings.videoPath);
 	if (!video.isOpened()) {
@@ -14,6 +19,27 @@ cv::Mat VideoFile::getFrame(int index) {
 	video.set(cv::CAP_PROP_POS_FRAMES, index);
 	cv::Mat frame;
 	video >> frame;
+#if 0
+	cv::Mat average = frame.clone();
+	for (int c = 0; c < 100; c++) {
+		cv::Mat next;
+		video >> next;
+		cv::Mat diff = (frame - next);
+		diff = diff.mul(diff);
+		cv::Scalar sum = cv::sum(diff) / double(frame.cols * next.rows);
+		const double threshold = 1.;
+		const bool isSame = sum[0] < threshold && sum[1] < threshold && sum[2] < threshold;
+		if (!isSame) {
+			break;
+		}
+
+		average = average * 0.7 + next * 0.3;
+	}
+	// video encoding does not introduce temporal noise - average over frames is useless
+	cv::imshow("tm", cv::abs(average - frame) * 100); cv::waitKey(0);
+	//cv::imshow("tm", average); cv::waitKey(0);
+	return average;
+#endif
 	return frame;
 }
 
@@ -34,12 +60,13 @@ bool TesseractCTX::init(int idx) {
 	tesseract.SetPageSegMode(tesseract::PSM_AUTO_OSD);
 	char fileName[128] = {0,};
 	snprintf(fileName, sizeof(fileName), "tesseract-%d.log", index);
+	tesseract.SetVariable("tessedit_write_images", "1");
 	tesseract.SetVariable("debug_file", fileName);
 	return true;
 }
 
 void TesseractCTX::orcImage(const cv::Mat& frame) {
-	tesseract.SetImage(frame.data, frame.cols, frame.rows, 3, int(frame.step));
+	tesseract.SetImage(frame.data, frame.cols, frame.rows, 1, int(frame.step));
 	tesseract.Recognize(nullptr);
 }
 
@@ -50,7 +77,7 @@ OCR::OCR(Settings settings, const MatcherFactory &factory, int totalFrames)
 	factory.create(matchers);
 }
 
-static void trimString(CharPtr &ptr) {
+static void makePrintable(CharPtr &ptr) {
 	int len = int(strlen(ptr.get()));
 	int step = 0;
 	for (int c = 0; c <= len; c++) {
@@ -72,19 +99,25 @@ static void trimString(CharPtr &ptr) {
 	}
 }
 
-void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNum) {
+static int clamp(int value, int min, int max) {
+	return std::max(min, std::min(value, max));
+}
+
+void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& sourceFrame, int frameNum) {
 	frameIndex = frameNum;
 	const int percent = int(float(frameIndex) / totalFrames * 100);
 	if (!settings.silent) {
 		printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.index, frameIndex, totalFrames, percent);
+		fflush(stdout);
 	}
-	fflush(stdout);
-	if (settings.doCrop) {
-		const cv::Mat cropped(matchFrame, cv::Range(0, matchFrame.rows / 2), cv::Range(0, matchFrame.cols / 2));
-		ctx.orcImage(cropped);
-	} else {
-		ctx.orcImage(matchFrame);
-	}
+	ctx.orcImage(preprocessFrame(sourceFrame));
+#if 0
+	Pix *thImage = ctx.tesseract.GetThresholdedImage();
+	char buff[64];
+	snprintf(buff, sizeof(buff), "thimg-%d.png", frameNum);
+	pixWriteAutoFormat(buff, thImage);
+	pixDestroy(&thImage);
+#endif
 
 	tesseract::ResultIterator* iter = ctx.tesseract.GetIterator();
 	if (!iter) {
@@ -99,12 +132,19 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNu
 			continue;
 		}
 		CharPtr text(iter->GetUTF8Text(tesseract::RIL_PARA));
-		trimString(text);
+		const int len = int(strlen(text.get()));
+		std::transform(text.get(), text.get() + len, text.get(), [] (char c) {
+			return char(tolower(c));
+		});
 
 		int left, top, right, bottom;
 		if (iter->BoundingBox(tesseract::RIL_PARA, &left, &top, &right, &bottom)) {
-			const cv::Rect bbox{{left, top}, cv::Size{right - left, bottom - top}};
-			cv::rectangle(matchFrame, bbox, {255, 0, 0});
+			cv::Rect bbox{{left, top}, cv::Size{right - left, bottom - top}};
+			bbox.x /= 2;
+			bbox.y /= 2;
+			bbox.width /= 2;
+			bbox.height /= 2;
+			cv::rectangle(sourceFrame, bbox, {255, 0, 0});
 			for (ResourceMatcher &matcher : matchers) {
 				matcher.addBlock(text, bbox);
 			}
@@ -112,24 +152,25 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameNu
 	} while (iter->Next(tesseract::RIL_PARA));
 
 	for (ResourceMatcher &matcher : matchers) {
-		if (matcher.getMatchConfidence() > ResourceMatcher::minThreshold) {
-			frame = matchFrame;
+		if (matcher.isMatchFound()) {
 			for (const auto& match : matcher.matches) {
-				cv::rectangle(matchFrame, match.bbox, red);
+				cv::rectangle(sourceFrame, match.bbox, red);
 			}
-			foundMatch = std::make_unique<ResourceMatcher>(matcher);
-			matchers.clear();
-			break;
+			if (!foundMatch.isMatchFound()) {
+				foundMatch = matcher;
+			}
 		}
 	}
+
+	frame = sourceFrame;
 }
 
 bool OCR::matchFound() const {
-	return foundMatch != nullptr;
+	return foundMatch.isMatchFound();
 }
 
 void OCR::clear() {
-	foundMatch.reset(nullptr);
+	foundMatch.clear();
 	for (ResourceMatcher& matcher : matchers) {
 		matcher.clear();
 	}
@@ -137,12 +178,28 @@ void OCR::clear() {
 	frameIndex = -1;
 }
 
+cv::Mat OCR::preprocessFrame(cv::Mat input) const {
+	cv::Mat frame = input.clone();
+	if (settings.doCrop) {
+		frame = frame.colRange(0, int(frame.cols / 2));
+	}
+	// zoom 2x to enable small text recognition
+	cv::resize(input, frame, {}, 2., 2., cv::INTER_CUBIC);
+	cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
+	//cv::threshold(frame, frame, 128., 255., cv::THRESH_OTSU | cv::THRESH_BINARY_INV);
+	// cv::adaptiveThreshold(frame, frame, 255., cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 21, 2.);
+	// cv::imshow("tm", frame); cv::waitKey(0);
+	//cv::adaptiveThreshold(frame, frame, 255., cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, 3, 2.);
+	return frame;
+}
+
 ThreadedOCR::ThreadedOCR(const Settings &settings, const MatcherFactory &factory, VideoFile &video)
 	: settings(settings)
 	, factory(factory)
-	, frameSkip(settings.frameSkip)
 	, video(video)
 	, result(settings, factory)
+	, maxFrame(video.frameCount)
+	, frameSkip(settings.frameSkip)
 {}
 
 bool ThreadedOCR::start(int count) {

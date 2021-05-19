@@ -62,7 +62,18 @@ int main(int argc, char *argv[]) {
 
 	if (threadedOCR.result.matchFound()) {
 		const int matchMs = video.frameToMs(threadedOCR.result.frameIndex);
-		printf("Match found at time %s, frame %d\n", timeToString(matchMs).c_str(), threadedOCR.result.frameIndex);
+		printf("Match found in [%s] at time %s, frame %d\n", settings.videoPath.c_str(), timeToString(matchMs).c_str(), threadedOCR.result.frameIndex);
+		if (!settings.silent) {
+			puts("Matcher words");
+			for (const ResourceMatcher& matcher : threadedOCR.result.matchers) {
+				if (matcher.isMatchFound()) {
+					for (const ResourceMatcher::Match& res : matcher.matches) {
+						printf("%s ", res.keyWord.c_str());
+					}
+					puts("");
+				}
+			}
+		}
 		if (settings.showFrame) {
 			cv::imshow("Match", threadedOCR.result.frame);
 			printf("Press any key to exit\n");

@@ -28,7 +28,7 @@ struct TesseractCTX {
 
 	bool init(int idx);
 
-	void orcImage(const cv::Mat& frame);
+	void orcImage(const cv::Mat &frame);
 
 	int index = 0;
 	tesseract::TessBaseAPI tesseract;
@@ -37,17 +37,19 @@ struct TesseractCTX {
 struct OCR {
 	OCR(Settings settings, const MatcherFactory &factory, int totalFrames = -1);
 
-	void processFrame(TesseractCTX& ctx, const cv::Mat& matchFrame, int frameIndex);
+	void processFrame(TesseractCTX &ctx, const cv::Mat &frameData, int frameIndex);
 
 	bool matchFound() const;
 
 	void clear();
 
+	cv::Mat preprocessFrame(cv::Mat input) const;
+
 	Settings settings;
 	bool showFrame = true;
 	int frameIndex = -1;
 	int totalFrames = -1;
-	std::unique_ptr<ResourceMatcher> foundMatch;
+	ResourceMatcher foundMatch;
 	cv::Mat frame;
 	std::vector<ResourceMatcher> matchers;
 };
@@ -65,7 +67,7 @@ struct ThreadedOCR {
 		bool err = false;
 	};
 
-	void threadStart(ThreadStartContext& threadCtx, int idx);
+	void threadStart(ThreadStartContext &threadCtx, int idx);
 
 	void waitFinish();
 
