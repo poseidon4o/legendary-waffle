@@ -38,7 +38,6 @@ set(SOURCES
 )
 
 add_executable(${PROJECT_NAME} "${SOURCES}")
-add_executable(Tool "src/Tool.cpp")
 
 function(add_libs _target)
 	if(MSVC)
