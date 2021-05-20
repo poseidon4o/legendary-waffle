@@ -15,6 +15,18 @@ bool VideoFile::init(const Settings &settings) {
 	return true;
 }
 
+void dbg(const cv::Mat &mat) {
+	if (mat.cols > 1280 || mat.rows > 720) {
+		cv::Mat dbgCopy;
+		const float factor = float(1280) / mat.cols;
+		cv::resize(mat, dbgCopy, cv::Size(), factor, factor);
+		cv::imshow("dbg", dbgCopy);
+	} else {
+		cv::imshow("dbg", mat);
+	}
+	cv::waitKey(0);
+}
+
 cv::Mat VideoFile::getFrame(int index) {
 	video.set(cv::CAP_PROP_POS_FRAMES, index);
 	cv::Mat frame;
@@ -70,9 +82,8 @@ void TesseractCTX::orcImage(const cv::Mat& frame) {
 	tesseract.Recognize(nullptr);
 }
 
-OCR::OCR(Settings settings, const MatcherFactory &factory, int totalFrames)
-	: settings(std::move(settings))
-	, totalFrames(totalFrames)
+OCR::OCR(const MatcherFactory &factory, int totalFrames)
+	: totalFrames(totalFrames)
 {
 	factory.create(matchers);
 }
@@ -103,23 +114,34 @@ static int clamp(int value, int min, int max) {
 	return std::max(min, std::min(value, max));
 }
 
-void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& sourceFrame, int frameNum) {
-	frameIndex = frameNum;
+cv::Rect operator/(const cv::Rect &rect, float factor) {
+	cv::Rect res = rect;
+	res.x = int(res.x / factor);
+	res.y = int(res.y / factor);
+	res.width = int(res.width / factor);
+	res.height = int(res.height / factor);
+	return res;
+}
+
+void OCR::processFrame(FrameProcessContext &ctx, const cv::Mat& sourceFrame) {
+	frameIndex = ctx.frameIndex;
 	const int percent = int(float(frameIndex) / totalFrames * 100);
-	if (!settings.silent) {
-		printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.index, frameIndex, totalFrames, percent);
+	if (ctx.settings.verbose) {
+		printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.recognizer.index, frameIndex, totalFrames, percent);
 		fflush(stdout);
 	}
-	ctx.orcImage(preprocessFrame(sourceFrame));
+	const cv::Mat processed = preprocessFrame(ctx.settings, sourceFrame);
+	const float factor = float(processed.cols) / sourceFrame.cols;
+	ctx.recognizer.orcImage(processed);
 #if 0
-	Pix *thImage = ctx.tesseract.GetThresholdedImage();
+	Pix *thImage = recognizer.tesseract.GetThresholdedImage();
 	char buff[64];
 	snprintf(buff, sizeof(buff), "thimg-%d.png", frameNum);
 	pixWriteAutoFormat(buff, thImage);
 	pixDestroy(&thImage);
 #endif
 
-	tesseract::ResultIterator* iter = ctx.tesseract.GetIterator();
+	tesseract::ResultIterator* iter = ctx.recognizer.tesseract.GetIterator();
 	if (!iter) {
 		assert(false);
 		return;
@@ -139,11 +161,7 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& sourceFrame, int frameN
 
 		int left, top, right, bottom;
 		if (iter->BoundingBox(tesseract::RIL_PARA, &left, &top, &right, &bottom)) {
-			cv::Rect bbox{{left, top}, cv::Size{right - left, bottom - top}};
-			bbox.x /= 2;
-			bbox.y /= 2;
-			bbox.width /= 2;
-			bbox.height /= 2;
+			const cv::Rect bbox = cv::Rect{{left, top}, cv::Size{right - left, bottom - top}} / factor;
 			cv::rectangle(sourceFrame, bbox, {255, 0, 0});
 			for (ResourceMatcher &matcher : matchers) {
 				matcher.addBlock(text, bbox);
@@ -151,26 +169,47 @@ void OCR::processFrame(TesseractCTX& ctx, const cv::Mat& sourceFrame, int frameN
 		}
 	} while (iter->Next(tesseract::RIL_PARA));
 
-	for (ResourceMatcher &matcher : matchers) {
-		if (matcher.isMatchFound()) {
-			for (const auto& match : matcher.matches) {
-				cv::rectangle(sourceFrame, match.bbox, red);
-			}
-			if (!foundMatch.isMatchFound()) {
-				foundMatch = matcher;
-			}
+	std::string matchName;
+	for (int c = 0; c < int(matchers.size()); c++) {
+		if (!matchers[c].isMatchFound()) {
+			continue;
 		}
+		if (matchName.empty()) {
+			matchName = matchers[c].displayName;
+		}
+		for (const auto& match : matchers[c].matches) {
+			cv::rectangle(sourceFrame, match.bbox, red);
+		}
+		matchIndices.push_back(c);
 	}
 
-	frame = sourceFrame;
+	// dbg(sourceFrame);
+
+	if (matchFound()) {
+		// only first match frame is saved
+		if (ctx.isFirstMatch.exchange(false) == true) {
+			frame = sourceFrame;
+		}
+
+		if (!ctx.settings.resultDir.empty()) {
+			char path[256]{0,};
+			snprintf(path, sizeof(path), "%s/frame-%d.jpeg", ctx.settings.resultDir.c_str(), frameIndex);
+			cv::imwrite(path, sourceFrame);
+		}
+		if (ctx.settings.verbose && ctx.settings.matchLimit > 1) {
+			const int matchIndex = ctx.matchIndex.fetch_add(1);
+			printf("Match found frame: [%d], [%s]  %d/%d\n", frameIndex, matchName.c_str(), matchIndex, ctx.settings.matchLimit);
+			fflush(stdout);
+		}
+	}
 }
 
 bool OCR::matchFound() const {
-	return foundMatch.isMatchFound();
+	return !matchIndices.empty();
 }
 
 void OCR::clear() {
-	foundMatch.clear();
+	matchIndices.clear();
 	for (ResourceMatcher& matcher : matchers) {
 		matcher.clear();
 	}
@@ -178,32 +217,34 @@ void OCR::clear() {
 	frameIndex = -1;
 }
 
-cv::Mat OCR::preprocessFrame(cv::Mat input) const {
-	cv::Mat frame = input.clone();
+cv::Mat OCR::preprocessFrame(const Settings &settings, cv::Mat input) const {
+	cv::Mat processed = input.clone();
 	if (settings.doCrop) {
-		frame = frame.colRange(0, int(frame.cols / 2));
+		processed = processed.colRange(0, int(processed.cols / 2));
 	}
 	// zoom 2x to enable small text recognition
-	cv::resize(input, frame, {}, 2., 2., cv::INTER_CUBIC);
-	cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
+	cv::resize(input, processed, {}, 4., 4., cv::INTER_CUBIC);
+	cv::cvtColor(processed, processed, cv::COLOR_BGR2GRAY);
+	//dbg(processed);
+
 	//cv::threshold(frame, frame, 128., 255., cv::THRESH_OTSU | cv::THRESH_BINARY_INV);
 	// cv::adaptiveThreshold(frame, frame, 255., cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 21, 2.);
 	// cv::imshow("tm", frame); cv::waitKey(0);
 	//cv::adaptiveThreshold(frame, frame, 255., cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, 3, 2.);
-	return frame;
+	return processed;
 }
 
 ThreadedOCR::ThreadedOCR(const Settings &settings, const MatcherFactory &factory, VideoFile &video)
 	: settings(settings)
 	, factory(factory)
 	, video(video)
-	, result(settings, factory)
 	, maxFrame(video.frameCount)
+	, remainingMatches(settings.matchLimit)
 	, frameSkip(settings.frameSkip)
 {}
 
 bool ThreadedOCR::start(int count) {
-	stopFlag = false;
+	shouldStop = false;
 	maxFrame = video.frameCount;
 	const int threadCount = count == -1 ? std::thread::hardware_concurrency() : count;
 	if (threadCount == 1) {
@@ -219,12 +260,12 @@ bool ThreadedOCR::start(int count) {
 			return ctx.started;
 		});
 		if (ctx.err) {
-			stopFlag.store(true);
+			shouldStop.store(true);
 			break;
 		}
 	}
 
-	if (stopFlag.load()) {
+	if (shouldStop.load()) {
 		stopThreads();
 		return false;
 	}
@@ -232,7 +273,7 @@ bool ThreadedOCR::start(int count) {
 }
 
 void ThreadedOCR::stopThreads() {
-	stopFlag.store(true);
+	shouldStop.store(true);
 	for (int c = 0; c < threads.size(); c++) {
 		threads[c].join();
 	}
@@ -253,11 +294,11 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 		return;
 	}
 
-	OCR ocr(settings, factory, video.frameCount);
+	OCR ocr(factory, video.frameCount);
 
 	int frameIdx = nextFrame.fetch_add(frameSkip);
 	while (frameIdx < maxFrame) {
-		if (stopFlag.load()) {
+		if (shouldStop.load()) {
 			return;
 		}
 		cv::Mat frame;
@@ -266,17 +307,23 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 			frame = video.getFrame(frameIdx);
 		}
 		ocr.clear();
-		ocr.processFrame(tessCtx, frame, frameIdx);
+		FrameProcessContext ctx {isFirstMatch, settings, tessCtx, frameIdx, matchIndex};
+		ocr.processFrame(ctx, frame);
 
 		if (ocr.matchFound()) {
-			lock_guard resLock(resultMutex);
-			result = std::move(ocr);
-			stopFlag = true;
+			const int remaining = remainingMatches.fetch_sub(1);
+			if (remaining >= 1) {
+				lock_guard resLock(resultMutex);
+				results.push_back(std::move(ocr));
+			}
+			if (remaining == 1) {
+				shouldStop.store(true);
+			}
 		}
 
-		if (stopFlag.load()) {
+		if (shouldStop.load()) {
 			resultCvar.notify_all();
-			return;
+			break;
 		}
 
 		frameIdx = nextFrame.fetch_add(frameSkip);
@@ -291,8 +338,14 @@ void ThreadedOCR::waitFinish() {
 	{
 		unique_lock lock(resultMutex);
 		resultCvar.wait(lock, [this]() {
-			return result.matchFound() || stopFlag.load() == true || runningThreads.load() == 0;
+			return remainingMatches == int(results.size()) // all results found
+				|| shouldStop.load() == true // stop flag has been set
+				|| runningThreads.load() == 0; // all threads are done
 		});
 	}
 	stopThreads();
+}
+
+bool ThreadedOCR::foundAnyMatches() const {
+	return remainingMatches.load() < settings.matchLimit;
 }

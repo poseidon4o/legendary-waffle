@@ -1,8 +1,9 @@
 #include "OCR.h"
 #include "ResourceMatcher.h"
-#include "Utils.hpp"
+#include "Utils.h"
 
 #include <chrono>
+#include <opencv2/opencv.hpp>
 
 std::string timeToString(int msCount) {
 	using namespace std;
@@ -18,15 +19,65 @@ std::string timeToString(int msCount) {
 	return buff;
 }
 
-int main(int argc, char *argv[]) {
-	const Settings settings = Settings::getSettings(argc, argv);
-	if (!settings.isValid()) {
-		Settings::printHelp();
-		return 0;
+void printResult(const OCR &res, const Settings &settings) {
+	if (!settings.resultDir.empty()) {
+		char path[256]{0,};
+		snprintf(path, sizeof(path), "%s/frame-%d.jpeg", settings.resultDir.c_str(), res.frameIndex);
+		printf("Matches for frame [%d] at \"%s\" {\n", res.frameIndex, path);
+	} else {
+		printf("Matches for frame [%d] {\n", res.frameIndex);
 	}
 
+	printf("Matches for frame [%d] {\n", res.frameIndex);
+
+	for (int c = 0; c < int(res.matchIndices.size()); c++) {
+		const ResourceMatcher &matcher = res.matchers[res.matchIndices[c]];
+		if (!matcher.isMatchFound()) {
+			continue;
+		}
+
+		if (!matcher.displayName.empty()) {
+			printf("\t%s: ", matcher.displayName.c_str());
+		} else {
+			printf("\t#%d: ", c);
+		}
+
+		for (int r = 0; r < matcher.matches.size(); r++) {
+			printf("(%s)", matcher.matches[r].actual.c_str());
+			if (r + 1 != matcher.matches.size()) {
+				printf(" ");
+			}
+		}
+		puts("");
+	}
+	puts("}");
+}
+
+void printResults(const ThreadedOCR &context, VideoFile &video, const Settings &settings) {
+	const OCR &first = context.results.front();
+	const int matchMs = video.frameToMs(first.frameIndex);
+	printf("First match found in [%s] at time %s, frame %d\n", settings.videoPath.c_str(), timeToString(matchMs).c_str(), first.frameIndex);
 	if (!settings.silent) {
-		settings.printValues();
+		for (const OCR &res : context.results) {
+			printResult(res, settings);
+		}
+	}
+
+	if (settings.showFrame) {
+		cv::imshow("Match", first.frame);
+		printf("Press any key to exit\n");
+		cv::waitKey(0);
+	}
+}
+
+int main(int argc, char *argv[]) {
+	const Settings settings = Settings::getSettings(argc, argv);
+	if (!settings.checkAndPrint()) {
+		return 0;
+	}
+	assert(settings.isValid());
+	if (!settings.silent) {
+		//settings.printValues();
 	}
 
 	using namespace std;
@@ -39,7 +90,7 @@ int main(int argc, char *argv[]) {
 		return 0;
 	}
 
-	MatcherFactory matcherFactory{settings.matchersFile};
+	MatcherFactory matcherFactory{settings.termsFile};
 	if (!matcherFactory.init()) {
 		puts("Failed to load matchers");
 		return 0;
@@ -60,28 +111,11 @@ int main(int argc, char *argv[]) {
 		printf("Processing time time %s [%dms]\n", timeToString(processingMs).c_str(), processingMs);
 	}
 
-	if (threadedOCR.result.matchFound()) {
-		const int matchMs = video.frameToMs(threadedOCR.result.frameIndex);
-		printf("Match found in [%s] at time %s, frame %d\n", settings.videoPath.c_str(), timeToString(matchMs).c_str(), threadedOCR.result.frameIndex);
-		if (!settings.silent) {
-			puts("Matcher words");
-			for (const ResourceMatcher& matcher : threadedOCR.result.matchers) {
-				if (matcher.isMatchFound()) {
-					for (const ResourceMatcher::Match& res : matcher.matches) {
-						printf("%s ", res.keyWord.c_str());
-					}
-					puts("");
-				}
-			}
-		}
-		if (settings.showFrame) {
-			cv::imshow("Match", threadedOCR.result.frame);
-			printf("Press any key to exit\n");
-			cv::waitKey(0);
-		}
+	if (threadedOCR.foundAnyMatches()) {
+		printResults(threadedOCR, video, settings);
 	}
 
 	cv::destroyAllWindows();
 
-	return threadedOCR.result.matchFound();
+	return threadedOCR.remainingMatches == 0;
 }

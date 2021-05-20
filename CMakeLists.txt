@@ -32,7 +32,8 @@ set(SOURCES
 	src/Source.cpp
 	src/ResourceMatcher.h
 	src/ResourceMatcher.cpp
-	src/Utils.hpp
+	src/Utils.h
+	src/Utils.cpp
 	src/OCR.h
 	src/OCR.cpp
 )
@@ -41,7 +42,7 @@ add_executable(${PROJECT_NAME} "${SOURCES}")
 
 function(add_libs _target)
 	if(MSVC)
-		target_compile_options(${_target} PRIVATE /W4 /WX /wd4505)
+		target_compile_options(${_target} PRIVATE /W4 /WX /wd4505 /wd4996)
 	else()
 		target_compile_options(${_target} PRIVATE -Wall -Wextra -pedantic -Werror)
 	endif()

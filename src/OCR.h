@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Utils.hpp"
+#include "Utils.h"
 #include "ResourceMatcher.h"
 
 #include <tesseract/baseapi.h>
@@ -34,22 +34,33 @@ struct TesseractCTX {
 	tesseract::TessBaseAPI tesseract;
 };
 
-struct OCR {
-	OCR(Settings settings, const MatcherFactory &factory, int totalFrames = -1);
+struct FrameProcessContext {
+	std::atomic<bool> &isFirstMatch;
+	const Settings &settings;
+	TesseractCTX &recognizer;
+	int frameIndex;
+	std::atomic<int> &matchIndex;
+};
 
-	void processFrame(TesseractCTX &ctx, const cv::Mat &frameData, int frameIndex);
+struct OCR {
+	OCR(OCR &&) = default;
+	OCR &operator=(OCR &&) = default;
+	OCR() = default;
+
+	OCR(const MatcherFactory &factory, int totalFrames = -1);
+
+	void processFrame(FrameProcessContext &ctx, const cv::Mat &frameData);
 
 	bool matchFound() const;
 
 	void clear();
 
-	cv::Mat preprocessFrame(cv::Mat input) const;
+	cv::Mat preprocessFrame(const Settings &settings, cv::Mat input) const;
 
-	Settings settings;
 	bool showFrame = true;
 	int frameIndex = -1;
 	int totalFrames = -1;
-	ResourceMatcher foundMatch;
+	std::vector<int> matchIndices;
 	cv::Mat frame;
 	std::vector<ResourceMatcher> matchers;
 };
@@ -71,18 +82,26 @@ struct ThreadedOCR {
 
 	void waitFinish();
 
+	bool foundAnyMatches() const;
+
 	const Settings settings;
 	const MatcherFactory &factory;
 	VideoFile &video;
 	std::mutex videoMutex;
 
-	OCR result;
+	std::vector<OCR> results;
+	std::atomic<int> remainingMatches = 1;
 	std::condition_variable resultCvar;
 	std::mutex resultMutex;
 
-	std::atomic<bool> stopFlag = false;
+	std::atomic<bool> shouldStop = false;
 	std::atomic<int> runningThreads = 0;
 	std::atomic<int> nextFrame = 0;
+
+	// for FrameProcessContext
+	std::atomic<bool> isFirstMatch = true;
+	std::atomic<int> matchIndex = 0;
+
 	int maxFrame;
 	const int frameSkip = 24;
 

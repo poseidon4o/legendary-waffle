@@ -44,10 +44,11 @@ static int getEditDistance(const char * word1, int len1, const char * word2, int
 }
 
 
-ResourceMatcher::ResourceMatcher(const std::vector<std::string>* keywords, int required)
-	: required(required)
-	, keywords(keywords)
-	, used(keywords ? keywords->size() : 0, false)
+ResourceMatcher::ResourceMatcher(const Descriptor &descriptor)
+	: required(descriptor.required)
+	, displayName(descriptor.name)
+	, keywords(&descriptor.words)
+	, used(keywords->size(), false)
 {}
 
 void ResourceMatcher::addBlock(const CharPtr& data, const cv::Rect &where) {
@@ -78,10 +79,24 @@ void ResourceMatcher::addBlock(const CharPtr& data, const cv::Rect &where) {
 			matches.push_back(match);
 		}
 #else
-		const auto it = std::search(data.get(), data.get() + len, keyWord.begin(), keyWord.end());
-		if (it != data.get() + len) {
-			matches.push_back({keyWord, keyWord, 0, where});
-			++found ;
+		char *end = data.get() + len;
+		int matchLen = int(keyWord.length());
+		char *it = std::search(data.get(), end, keyWord.begin(), keyWord.end());
+		int distance = 0;
+		if (keyWord.length() >= 5) {
+			distance = 1;
+			--matchLen;
+			// try without first or last letter
+			if (it == end) {
+				it = std::search(data.get(), end, keyWord.begin() + 1, keyWord.end());
+			}
+			if (it == end) {
+				it = std::search(data.get(), end, keyWord.begin(), keyWord.end() - 1);
+			}
+		}
+		if (it != end) {
+			matches.push_back({keyWord, std::string(it, matchLen), distance, where});
+			++found;
 			used[c] = true;
 		}
 #endif
@@ -126,7 +141,16 @@ bool MatcherFactory::init() {
 			stream.seekg(0);
 		}
 		while (stream >> word) {
-			if (word == "#" && keyWords.empty()) {
+			if (word.front() == '#') {
+				if (word.size() == 1) {
+					stream >> word;
+				}
+				if (stream && word != "#") {
+					if (word.front() == '#') {
+						word.erase(word.begin(), word.begin() + 1);
+					}
+					desc.name = word;
+				}
 				break;
 			}
 			keyWords.push_back(word);
@@ -144,7 +168,12 @@ bool MatcherFactory::init() {
 
 void MatcherFactory::showInfo() const {
 	for (int c = 0; c < descriptors.size(); c++) {
-		printf("Matcher[%d]:", c);
+		if (descriptors[c].name.empty()) {
+			printf("Matcher[%d]: ", c);
+		} else {
+			printf("Matcher[%s]: ", descriptors[c].name.c_str());
+		}
+
 		for (const std::string& w : descriptors[c].words) {
 			printf("%s ", w.c_str());
 		}
@@ -154,7 +183,8 @@ void MatcherFactory::showInfo() const {
 
 void MatcherFactory::create(std::vector<ResourceMatcher>& matchers) const {
 	matchers.clear();
+	matchers.reserve(descriptors.size());
 	for (const Descriptor &desc: descriptors) {
-		matchers.push_back(ResourceMatcher(&desc.words, desc.required));
+		matchers.emplace_back(desc);
 	}
 }

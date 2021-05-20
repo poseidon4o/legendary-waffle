@@ -8,8 +8,15 @@
 
 typedef std::unique_ptr<char[]> CharPtr;
 
+struct Descriptor {
+	std::string name;
+	int required = -1;
+	std::vector<std::string> words;
+};
+
 struct ResourceMatcher {
-	ResourceMatcher(const std::vector<std::string> *keywords = nullptr, int required = -1);
+	ResourceMatcher() = default;
+	ResourceMatcher(const Descriptor &desc);
 
 	void addBlock(const CharPtr &data, const cv::Rect &where);
 
@@ -30,6 +37,7 @@ struct ResourceMatcher {
 	int found = 0;
 	constexpr static float minThreshold = 0.3f;
 	std::vector<Match> matches;
+	std::string displayName;
 
 	const std::vector<std::string> *keywords = nullptr;
 	std::vector<bool> used;
@@ -37,10 +45,6 @@ struct ResourceMatcher {
 
 struct MatcherFactory {
 	std::string matchersFile;
-	struct Descriptor {
-		int required = -1;
-		std::vector<std::string> words;
-	};
 	std::vector<Descriptor> descriptors;
 
 	bool init();
