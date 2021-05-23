@@ -1,1 +1,4 @@
-technopolis bg nokia samsung beko
+- kiwi #ignore-kiwi a blacklist rule that will reject any other rule if it matches
+3 technopolis bg nokia samsung beko #techno rule with name "techno", 3 terms required to match
+~ 2 orange apples bananas # food A soft rule with name "food", 2 terms required to match
+# some other text #commented out rule
