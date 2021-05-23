@@ -28,9 +28,15 @@ void dbg(const cv::Mat &mat) {
 }
 
 cv::Mat VideoFile::getFrame(int index) {
+	ms dummy;
+	return getFrame(index, dummy);
+}
+
+cv::Mat VideoFile::getFrame(int index, ms &frameTime) {
 	video.set(cv::CAP_PROP_POS_FRAMES, index);
 	cv::Mat frame;
 	video >> frame;
+	frameTime = ms(int(video.get(cv::CAP_PROP_POS_MSEC)));
 #if 0
 	cv::Mat average = frame.clone();
 	for (int c = 0; c < 100; c++) {
@@ -55,9 +61,9 @@ cv::Mat VideoFile::getFrame(int index) {
 	return frame;
 }
 
-int VideoFile::frameToMs(int index) {
+ms VideoFile::frameToMs(int index) {
 	video.set(cv::CAP_PROP_POS_FRAMES, index);
-	return int(video.get(cv::CAP_PROP_POS_MSEC));
+	return ms(int(video.get(cv::CAP_PROP_POS_MSEC)));
 }
 
 VideoFile::~VideoFile() {
@@ -85,7 +91,7 @@ void TesseractCTX::orcImage(const cv::Mat& frame) {
 OCR::OCR(const MatcherFactory &factory, int totalFrames)
 	: totalFrames(totalFrames)
 {
-	factory.create(matchers);
+	factory.create(ruleSet);
 }
 
 static void makePrintable(CharPtr &ptr) {
@@ -123,11 +129,12 @@ cv::Rect operator/(const cv::Rect &rect, float factor) {
 	return res;
 }
 
-void OCR::processFrame(FrameProcessContext &ctx, const cv::Mat& sourceFrame) {
-	frameIndex = ctx.frameIndex;
-	const int percent = int(float(frameIndex) / totalFrames * 100);
+void OCR::processFrame(FrameProcessContext &ctx, const cv::Mat& sourceFrame, ms frameTime) {
+	assert(!ruleSet.isEmpty() && "Empty rule set");
+	result.frameIndex = ctx.frameIndex;
+	const int percent = int(float(ctx.frameIndex) / totalFrames * 100);
 	if (ctx.settings.verbose) {
-		printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.recognizer.index, frameIndex, totalFrames, percent);
+		printf("Thread[%d]: Processing frame [%d/%d] %d%%\n", ctx.recognizer.index, ctx.frameIndex, totalFrames, percent);
 		fflush(stdout);
 	}
 	const cv::Mat processed = preprocessFrame(ctx.settings, sourceFrame);
@@ -153,68 +160,77 @@ void OCR::processFrame(FrameProcessContext &ctx, const cv::Mat& sourceFrame) {
 		if (iter->Empty(tesseract::RIL_PARA)) {
 			continue;
 		}
-		CharPtr text(iter->GetUTF8Text(tesseract::RIL_PARA));
-		const int len = int(strlen(text.get()));
-		std::transform(text.get(), text.get() + len, text.get(), [] (char c) {
-			return char(tolower(c));
-		});
+		CharPtrView textView;
+		{
+			CharPtr text(iter->GetUTF8Text(tesseract::RIL_PARA));
+			const int len = int(strlen(text.get()));
+			std::transform(text.get(), text.get() + len, text.get(), [](char c) {
+				return char(tolower(c));
+			});
+			textView = CharPtrView(std::move(text), len);
+		}
 
 		int left, top, right, bottom;
 		if (iter->BoundingBox(tesseract::RIL_PARA, &left, &top, &right, &bottom)) {
 			const cv::Rect bbox = cv::Rect{{left, top}, cv::Size{right - left, bottom - top}} / factor;
 			cv::rectangle(sourceFrame, bbox, {255, 0, 0});
-			for (ResourceMatcher &matcher : matchers) {
-				matcher.addBlock(text, bbox);
-			}
+			ruleSet.addBlock(textView, bbox);
 		}
 	} while (iter->Next(tesseract::RIL_PARA));
 
 	std::string matchName;
-	for (int c = 0; c < int(matchers.size()); c++) {
-		if (!matchers[c].isMatchFound()) {
+	const MatcherList &whitelist = ruleSet.getWhitelist();
+	for (int c = 0; c < int(whitelist.size()); c++) {
+		if (!whitelist[c].isMatchFound()) {
 			continue;
 		}
-		if (matchName.empty()) {
-			matchName = matchers[c].displayName;
+		if (whitelist[c].descriptor().isSoftMatch) {
+			result.matchType = MatchResult::MatchType(result.matchType | MatchResult::SoftMatch);
+		} else {
+			result.matchType = MatchResult::MatchType(result.matchType | MatchResult::HardMatch);
 		}
-		for (const auto& match : matchers[c].matches) {
+		if (matchName.empty()) {
+			matchName = whitelist[c].descriptor().name;
+		}
+		for (const auto& match : whitelist[c].getMatchedTerms()) {
 			cv::rectangle(sourceFrame, match.bbox, red);
 		}
-		matchIndices.push_back(c);
+		result.whitelistIndices.push_back(c);
 	}
 
 	// dbg(sourceFrame);
 
-	if (matchFound()) {
+	if (result.matchType != MatchResult::NoMatch) {
+		assert(!matchName.empty());
 		// only first match frame is saved
-		if (ctx.isFirstMatch.exchange(false) == true) {
-			frame = sourceFrame;
+		if ((result.matchType & MatchResult::HardMatch) != 0 && ctx.isFirstMatch.exchange(false) == true) {
+			result.frame = sourceFrame;
 		}
 
 		if (!ctx.settings.resultDir.empty()) {
 			char path[256]{0,};
-			snprintf(path, sizeof(path), "%s/frame-%d.jpeg", ctx.settings.resultDir.c_str(), frameIndex);
+			snprintf(path, sizeof(path), "%s/frame-%s.jpeg", ctx.settings.resultDir.c_str(), timeToString(frameTime).c_str());
 			cv::imwrite(path, sourceFrame);
 		}
-		if (ctx.settings.verbose && ctx.settings.matchLimit > 1) {
+
+		if (result.matchType & MatchResult::HardMatch) {
 			const int matchIndex = ctx.matchIndex.fetch_add(1);
-			printf("Match found frame: [%d], [%s]  %d/%d\n", frameIndex, matchName.c_str(), matchIndex, ctx.settings.matchLimit);
+			printf("Match found frame: [%d], [%s]  %d/%d\n", result.frameIndex, matchName.c_str(), matchIndex + 1, ctx.settings.matchLimit);
+			fflush(stdout);
+		} else if (result.matchType & MatchResult::SoftMatch) {
+			printf("Soft match found frame: [%d], [%s]\n", result.frameIndex, matchName.c_str());
 			fflush(stdout);
 		}
+		result.ruleSet = ruleSet;
 	}
-}
-
-bool OCR::matchFound() const {
-	return !matchIndices.empty();
 }
 
 void OCR::clear() {
-	matchIndices.clear();
-	for (ResourceMatcher& matcher : matchers) {
-		matcher.clear();
-	}
-	frame.release();
-	frameIndex = -1;
+	result.whitelistIndices.clear();
+	ruleSet.clear();
+	result.frame.release();
+	result.frameIndex = -1;
+	result.matchType = MatchResult::NoMatch;
 }
 
 cv::Mat OCR::preprocessFrame(const Settings &settings, cv::Mat input) const {
@@ -297,6 +313,7 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 	OCR ocr(factory, video.frameCount);
 
 	int frameIdx = nextFrame.fetch_add(frameSkip);
+	ms frameTime;
 	while (frameIdx < maxFrame) {
 		if (shouldStop.load()) {
 			return;
@@ -304,17 +321,18 @@ void ThreadedOCR::threadStart(ThreadStartContext& threadCtx, int idx) {
 		cv::Mat frame;
 		{
 			lock_guard lock(videoMutex);
-			frame = video.getFrame(frameIdx);
+			frame = video.getFrame(frameIdx, frameTime);
 		}
 		ocr.clear();
 		FrameProcessContext ctx {isFirstMatch, settings, tessCtx, frameIdx, matchIndex};
-		ocr.processFrame(ctx, frame);
+		ocr.processFrame(ctx, frame, frameTime);
 
-		if (ocr.matchFound()) {
-			const int remaining = remainingMatches.fetch_sub(1);
+		if (ocr.result.matchType != MatchResult::NoMatch) {
+			const int isHard = (ocr.result.matchType & MatchResult::HardMatch) != 0;
+			const int remaining = remainingMatches.fetch_sub(isHard);
 			if (remaining >= 1) {
 				lock_guard resLock(resultMutex);
-				results.push_back(std::move(ocr));
+				results.push_back(std::move(ocr.result));
 			}
 			if (remaining == 1) {
 				shouldStop.store(true);

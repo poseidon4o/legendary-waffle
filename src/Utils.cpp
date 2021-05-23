@@ -53,3 +53,16 @@ Settings Settings::getSettings(int argc, char* argv[]) {
 
 	return sts;
 }
+
+std::string timeToString(ms time) {
+	using namespace std;
+	using namespace chrono;
+
+	char buff[64];
+	snprintf(buff, sizeof(buff), "%02dh-%02dm-%02ds",
+	         int(duration_cast<hours>(time).count()),
+	         int(duration_cast<minutes>(time).count()),
+	         int(duration_cast<seconds>(time).count())
+	);
+	return buff;
+}

@@ -1,50 +1,38 @@
 #include "OCR.h"
-#include "ResourceMatcher.h"
+#include "RuleMatcher.h"
 #include "Utils.h"
 
 #include <chrono>
 #include <opencv2/opencv.hpp>
 
-std::string timeToString(int msCount) {
-	using namespace std;
-	using namespace chrono;
+#include <map>
 
-	const milliseconds ms(msCount);
-	char buff[64];
-	snprintf(buff, sizeof(buff), "%d:%d:%d",
-		int(duration_cast<hours>(ms).count()),
-		int(duration_cast<minutes>(ms).count()),
-		int(duration_cast<seconds>(ms).count())
-	);
-	return buff;
-}
+#pragma optimize("", off)
 
-void printResult(const OCR &res, const Settings &settings) {
+
+void printHardMatch(const MatchResult &res, VideoFile &video, const Settings &settings) {
+	const std::string &frameTime = timeToString(video.frameToMs(res.frameIndex));
 	if (!settings.resultDir.empty()) {
 		char path[256]{0,};
-		snprintf(path, sizeof(path), "%s/frame-%d.jpeg", settings.resultDir.c_str(), res.frameIndex);
-		printf("Matches for frame [%d] at \"%s\" {\n", res.frameIndex, path);
+		snprintf(path, sizeof(path), "%s/frame-%s.jpeg", settings.resultDir.c_str(), frameTime.c_str());
+		printf("Matches for frame [%d] (%s) at \"%s\" {\n", res.frameIndex, frameTime.c_str(), path);
 	} else {
-		printf("Matches for frame [%d] {\n", res.frameIndex);
+		printf("Matches for frame [%d] (%s) {\n", res.frameIndex, frameTime.c_str());
 	}
 
-	printf("Matches for frame [%d] {\n", res.frameIndex);
-
-	for (int c = 0; c < int(res.matchIndices.size()); c++) {
-		const ResourceMatcher &matcher = res.matchers[res.matchIndices[c]];
-		if (!matcher.isMatchFound()) {
+	const MatcherList &whitelist = res.ruleSet.getWhitelist();
+	for (int c = 0; c < int(res.whitelistIndices.size()); c++) {
+		const RuleMatcher &matcher = whitelist[res.whitelistIndices[c]];
+		if (!matcher.isMatchFound() || matcher.descriptor().isSoftMatch) {
 			continue;
 		}
 
-		if (!matcher.displayName.empty()) {
-			printf("\t%s: ", matcher.displayName.c_str());
-		} else {
-			printf("\t#%d: ", c);
-		}
+		printf("\t%s: ", matcher.descriptor().name.c_str());
 
-		for (int r = 0; r < matcher.matches.size(); r++) {
-			printf("(%s)", matcher.matches[r].actual.c_str());
-			if (r + 1 != matcher.matches.size()) {
+		const RuleMatch& termList = matcher.getMatchedTerms();
+		for (int r = 0; r < termList.size(); r++) {
+			printf("(%s)", termList[r].actual.c_str());
+			if (r + 1 != termList.size()) {
 				printf(" ");
 			}
 		}
@@ -53,18 +41,44 @@ void printResult(const OCR &res, const Settings &settings) {
 	puts("}");
 }
 
-void printResults(const ThreadedOCR &context, VideoFile &video, const Settings &settings) {
-	const OCR &first = context.results.front();
-	const int matchMs = video.frameToMs(first.frameIndex);
+void printResults(const ThreadedOCR &context, VideoFile &video, const Settings &settings, const MatcherFactory &matcherFactory) {
+	const MatchResult &first = context.results.front();
+	const ms matchMs = video.frameToMs(first.frameIndex);
 	printf("First match found in [%s] at time %s, frame %d\n", settings.videoPath.c_str(), timeToString(matchMs).c_str(), first.frameIndex);
+
 	if (!settings.silent) {
-		for (const OCR &res : context.results) {
-			printResult(res, settings);
+		struct SoftMatchInfo {
+			std::vector<int> frames;
+		};
+		std::map<int, SoftMatchInfo> softMatches;
+		for (const MatchResult &res : context.results) {
+			if (res.matchType & MatchResult::HardMatch) {
+				printHardMatch(res, video, settings);
+			}
+			if (res.matchType & MatchResult::SoftMatch) {
+				for (int c = 0; c < int(res.whitelistIndices.size()); c++) {
+					SoftMatchInfo &info = softMatches[res.whitelistIndices[c]];
+					info.frames.push_back(res.frameIndex);
+				}
+			}
+		}
+
+		RuleSet set;
+		matcherFactory.create(set);
+		// need only names
+		const MatcherList &whitelist = set.getWhitelist();
+		for (const auto &pair : softMatches) {
+			printf("Soft match [%s] at {", whitelist[pair.first].descriptor().name.c_str());
+			for (int c = 0; c < int(pair.second.frames.size()); c++) {
+				const std::string frameStr = timeToString(video.frameToMs(pair.second.frames[c]));
+				printf("[%d %s]", pair.second.frames[c], frameStr.c_str());
+			}
+			puts("}");
 		}
 	}
 
 	if (settings.showFrame) {
-		cv::imshow("Match", first.frame);
+		cv::imshow("TermMatch", first.frame);
 		printf("Press any key to exit\n");
 		cv::waitKey(0);
 	}
@@ -106,13 +120,13 @@ int main(int argc, char *argv[]) {
 	threadedOCR.waitFinish();
 
 	const high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-	const int processingMs = int(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+	const ms processingMs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 	if (!settings.silent) {
-		printf("Processing time time %s [%dms]\n", timeToString(processingMs).c_str(), processingMs);
+		printf("Processing time time %s [%dms]\n", timeToString(processingMs).c_str(), int(processingMs.count()));
 	}
 
 	if (threadedOCR.foundAnyMatches()) {
-		printResults(threadedOCR, video, settings);
+		printResults(threadedOCR, video, settings, matcherFactory);
 	}
 
 	cv::destroyAllWindows();

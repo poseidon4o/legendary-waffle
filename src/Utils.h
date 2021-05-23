@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <mutex>
 #include <string>
+#include <chrono>
 
 #include <opencv2/opencv.hpp>
 
@@ -36,3 +37,7 @@ struct Settings {
 
 	static Settings getSettings(int argc, char* argv[]);
 };
+
+using ms = std::chrono::milliseconds;
+
+std::string timeToString(ms time);

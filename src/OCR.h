@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Utils.h"
-#include "ResourceMatcher.h"
+#include "RuleMatcher.h"
 
 #include <tesseract/baseapi.h>
 #include <opencv2/opencv.hpp>
@@ -14,8 +14,9 @@ struct VideoFile {
 	bool init(const Settings& settings);
 
 	cv::Mat getFrame(int index);
+	cv::Mat getFrame(int index, ms &frameTime);
 
-	int frameToMs(int index);
+	ms frameToMs(int index);
 
 	~VideoFile();
 
@@ -42,6 +43,20 @@ struct FrameProcessContext {
 	std::atomic<int> &matchIndex;
 };
 
+struct MatchResult {
+	enum MatchType {
+		NoMatch = 0,
+		SoftMatch = 1 << 0,
+		HardMatch = 1 << 1,
+	};
+
+	std::vector<int> whitelistIndices;
+	cv::Mat frame;
+	MatchType matchType = NoMatch;
+	int frameIndex = -1;
+	RuleSet ruleSet;
+};
+
 struct OCR {
 	OCR(OCR &&) = default;
 	OCR &operator=(OCR &&) = default;
@@ -49,20 +64,15 @@ struct OCR {
 
 	OCR(const MatcherFactory &factory, int totalFrames = -1);
 
-	void processFrame(FrameProcessContext &ctx, const cv::Mat &frameData);
-
-	bool matchFound() const;
-
+	void processFrame(FrameProcessContext &ctx, const cv::Mat &frameData, ms frameTime);
 	void clear();
 
 	cv::Mat preprocessFrame(const Settings &settings, cv::Mat input) const;
 
-	bool showFrame = true;
-	int frameIndex = -1;
 	int totalFrames = -1;
-	std::vector<int> matchIndices;
-	cv::Mat frame;
-	std::vector<ResourceMatcher> matchers;
+	RuleSet ruleSet;
+
+	MatchResult result;
 };
 
 struct ThreadedOCR {
@@ -89,7 +99,7 @@ struct ThreadedOCR {
 	VideoFile &video;
 	std::mutex videoMutex;
 
-	std::vector<OCR> results;
+	std::vector<MatchResult> results;
 	std::atomic<int> remainingMatches = 1;
 	std::condition_variable resultCvar;
 	std::mutex resultMutex;
